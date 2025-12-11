@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.local
+.env.production
+coverage
+.DS_Store

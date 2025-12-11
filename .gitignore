@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.production
+*.log
+coverage/
+.DS_Store
+.vscode/
+.idea/
+
+# Database volumes
+postgres_data/
+redis_data/
