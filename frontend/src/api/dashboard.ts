@@ -2,7 +2,7 @@ import { apiClient } from './client';
 import { ApiResponse } from '../types';
 
 export interface KeyMetrics {
-  dailyRevenue: number;
+  dailyRevenue: number; // Actually represents last 30 days revenue
   totalCustomers: number;
   topProducts: ProductMetric[];
   revenueChange: number;

@@ -3,7 +3,7 @@ import { FinanceService, DateRange } from './financeService';
 import { CacheService, CacheKeys, CacheTTL } from '../utils/cache';
 
 export interface KeyMetrics {
-  dailyRevenue: number;
+  dailyRevenue: number; // Actually represents last 30 days revenue
   totalCustomers: number;
   topProducts: ProductMetric[];
   revenueChange: number;
@@ -108,75 +108,76 @@ export class DashboardService {
    * Internal method to calculate key metrics (without caching)
    */
   private static async calculateKeyMetricsInternal(userId: string): Promise<KeyMetrics> {
-    // Get today's date range
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Get current period (last 30 days) for more meaningful metrics
+    const currentEnd = new Date();
+    const currentStart = new Date();
+    currentStart.setDate(currentStart.getDate() - 30);
 
-    const todayRange: DateRange = {
-      startDate: today,
-      endDate: tomorrow
+    const currentRange: DateRange = {
+      startDate: currentStart,
+      endDate: currentEnd
     };
 
-    // Get yesterday's date range for comparison
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayRange: DateRange = {
-      startDate: yesterday,
-      endDate: today
+    // Get previous period (30 days before current period) for comparison
+    const previousEnd = new Date(currentStart);
+    const previousStart = new Date(previousEnd);
+    previousStart.setDate(previousStart.getDate() - 30);
+
+    const previousRange: DateRange = {
+      startDate: previousStart,
+      endDate: previousEnd
     };
 
-    // Calculate today's revenue
-    const todayTransactions = await TransactionModel.findByUser(userId, {
-      startDate: todayRange.startDate,
-      endDate: todayRange.endDate
+    // Calculate current period revenue
+    const currentTransactions = await TransactionModel.findByUser(userId, {
+      startDate: currentRange.startDate,
+      endDate: currentRange.endDate
     });
 
-    const todayMetrics = FinanceService.calculateMetricsFromTransactions(
-      todayTransactions,
-      todayRange
+    const currentMetrics = FinanceService.calculateMetricsFromTransactions(
+      currentTransactions,
+      currentRange
     );
 
-    // Calculate yesterday's revenue for comparison
-    const yesterdayTransactions = await TransactionModel.findByUser(userId, {
-      startDate: yesterdayRange.startDate,
-      endDate: yesterdayRange.endDate
+    // Calculate previous period revenue for comparison
+    const previousTransactions = await TransactionModel.findByUser(userId, {
+      startDate: previousRange.startDate,
+      endDate: previousRange.endDate
     });
 
-    const yesterdayMetrics = FinanceService.calculateMetricsFromTransactions(
-      yesterdayTransactions,
-      yesterdayRange
+    const previousMetrics = FinanceService.calculateMetricsFromTransactions(
+      previousTransactions,
+      previousRange
     );
 
     // Calculate customer count (unique customer IDs)
-    const todayCustomers = new Set(
-      todayTransactions
+    const currentCustomers = new Set(
+      currentTransactions
         .filter(t => t.customerId)
         .map(t => t.customerId)
     ).size;
 
-    const yesterdayCustomers = new Set(
-      yesterdayTransactions
+    const previousCustomers = new Set(
+      previousTransactions
         .filter(t => t.customerId)
         .map(t => t.customerId)
     ).size;
 
-    // Calculate top products
-    const topProducts = this.calculateTopProducts(todayTransactions);
+    // Calculate top products from current period
+    const topProducts = this.calculateTopProducts(currentTransactions);
 
     // Calculate changes
-    const revenueChange = yesterdayMetrics.totalIncome > 0
-      ? ((todayMetrics.totalIncome - yesterdayMetrics.totalIncome) / yesterdayMetrics.totalIncome) * 100
+    const revenueChange = previousMetrics.totalIncome > 0
+      ? ((currentMetrics.totalIncome - previousMetrics.totalIncome) / previousMetrics.totalIncome) * 100
       : 0;
 
-    const customerChange = yesterdayCustomers > 0
-      ? ((todayCustomers - yesterdayCustomers) / yesterdayCustomers) * 100
+    const customerChange = previousCustomers > 0
+      ? ((currentCustomers - previousCustomers) / previousCustomers) * 100
       : 0;
 
     return {
-      dailyRevenue: todayMetrics.totalIncome,
-      totalCustomers: todayCustomers,
+      dailyRevenue: currentMetrics.totalIncome, // Now represents last 30 days revenue
+      totalCustomers: currentCustomers,
       topProducts,
       revenueChange,
       customerChange

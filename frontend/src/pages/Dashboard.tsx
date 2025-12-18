@@ -179,11 +179,11 @@ export const Dashboard: React.FC = () => {
 
               {/* Key Metrics Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {/* Daily Revenue Card */}
+                {/* Recent Revenue Card */}
                 <div className="bg-white rounded-lg shadow p-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-gray-600">Daily Revenue</p>
+                      <p className="text-sm font-medium text-gray-600">Recent Revenue (30 days)</p>
                       <p className="text-3xl font-bold text-gray-900 mt-2">
                         ₹{dashboardData.keyMetrics.dailyRevenue.toLocaleString()}
                       </p>
@@ -333,8 +333,8 @@ export const Dashboard: React.FC = () => {
               )}
 
               {/* Empty State */}
-              {!dashboardData.keyMetrics.dailyRevenue && 
-               !dashboardData.keyMetrics.totalCustomers && 
+              {dashboardData.keyMetrics.dailyRevenue === 0 && 
+               dashboardData.keyMetrics.totalCustomers === 0 && 
                dashboardData.insights.length === 0 && (
                 <div className="bg-white rounded-lg shadow p-8 text-center">
                   <div className="text-6xl mb-4">📊</div>
