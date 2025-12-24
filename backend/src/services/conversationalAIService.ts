@@ -10,6 +10,10 @@ import { MarketingService } from './marketingService';
 import { DashboardService } from './dashboardService';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import config from '../config/env';
+import axios from 'axios';
+import { pool } from '../config/database';
+import { TransactionModel } from '../models/Transaction';
+import { BusinessProfileModel } from '../models/BusinessProfile';
 
 /**
  * Conversational AI Service
@@ -25,6 +29,75 @@ export class ConversationalAIService {
     if (!this.genAI && config.ai.googleApiKey) {
       this.genAI = new GoogleGenerativeAI(config.ai.googleApiKey);
     }
+  }
+
+  /**
+   * Use Poe API to generate AI responses
+   */
+  private static async enhanceWithPoe(
+    prompt: string,
+    context?: string,
+    botName: string = config.ai.poeBot
+  ): Promise<string | null> {
+    try {
+      if (!config.ai.poeApiKey) {
+        return null; // Fall back to other methods
+      }
+
+      const systemPrompt = `You are a business advisor AI assistant for small and medium enterprises (MSMEs). 
+Your role is to provide practical, actionable business advice based on the user's data and context.
+
+Key guidelines:
+- Be concise but comprehensive (2-3 paragraphs max)
+- Focus on actionable recommendations
+- Use specific numbers and data when available
+- Maintain a professional yet friendly tone
+- Prioritize cost-effective solutions for small businesses`;
+
+      const fullPrompt = context 
+        ? `${systemPrompt}\n\nBusiness Context: ${context}\n\nUser Query: ${prompt}`
+        : `${systemPrompt}\n\nUser Query: ${prompt}`;
+
+      const response = await axios.post('https://api.poe.com/bot/chat', {
+        bot: botName,
+        query: fullPrompt,
+        conversation_id: null, // Start new conversation each time
+      }, {
+        headers: {
+          'Authorization': `Bearer ${config.ai.poeApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000, // 30 second timeout
+      });
+
+      return response.data.text || null;
+    } catch (error: any) {
+      console.error('Poe API error:', error.response?.data || error.message);
+      return null; // Fall back to other methods
+    }
+  }
+
+  /**
+   * Enhanced AI response with multiple fallback options
+   */
+  private static async getAIResponse(
+    prompt: string,
+    context?: string
+  ): Promise<string | null> {
+    // Try Poe first (if available)
+    const poeResponse = await this.enhanceWithPoe(prompt, context);
+    if (poeResponse) {
+      return poeResponse;
+    }
+
+    // Fall back to Gemini
+    const geminiResponse = await this.enhanceWithGemini(prompt, context);
+    if (geminiResponse) {
+      return geminiResponse;
+    }
+
+    // No AI available
+    return null;
   }
 
   /**
@@ -57,7 +130,155 @@ export class ConversationalAIService {
   }
 
   /**
-   * Process a user query and generate a response
+   * Build comprehensive user context automatically
+   */
+  static async buildUserContext(userId: string): Promise<string> {
+    try {
+      const contextParts: string[] = [];
+
+      // 1. Get user basic info
+      const userResult = await pool.query(
+        'SELECT email, created_at FROM users WHERE id = $1',
+        [userId]
+      );
+      
+      if (userResult.rows.length > 0) {
+        const user = userResult.rows[0];
+        const memberSince = new Date(user.created_at).toLocaleDateString();
+        contextParts.push(`User: ${user.email} (member since ${memberSince})`);
+      }
+
+      // 2. Get business profile
+      const businessProfile = await BusinessProfileModel.findByUserId(userId);
+      if (businessProfile) {
+        contextParts.push(
+          `Business: ${businessProfile.businessName}`,
+          `Industry: ${businessProfile.industry}`,
+          `Business Type: ${businessProfile.businessType}`,
+          `Location: ${businessProfile.location}`,
+          `Target Audience: ${businessProfile.targetAudience}`,
+          `Employee Count: ${businessProfile.employeeCount}`,
+          `Monthly Revenue: ₹${businessProfile.monthlyRevenue?.toLocaleString() || 'Not specified'}`
+        );
+      }
+
+      // 3. Get recent financial summary (last 30 days)
+      try {
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 30);
+
+        const recentTransactions = await TransactionModel.findByUser(userId, {
+          startDate,
+          endDate,
+        });
+
+        if (recentTransactions.length > 0) {
+          const metrics = FinanceService.calculateMetricsFromTransactions(
+            recentTransactions,
+            { startDate, endDate }
+          );
+
+          contextParts.push(
+            `\nRecent Financial Performance (Last 30 days):`,
+            `Total Income: ₹${metrics.totalIncome.toLocaleString()}`,
+            `Total Expenses: ₹${metrics.totalExpenses.toLocaleString()}`,
+            `Net Profit: ₹${metrics.netProfit.toLocaleString()}`,
+            `Profit Margin: ${metrics.profitMargin.toFixed(1)}%`,
+            `Transaction Count: ${recentTransactions.length}`
+          );
+
+          // Add top expense categories
+          const expenseCategories = metrics.categoryBreakdown
+            .filter(cat => cat.category !== 'Uncategorized')
+            .slice(0, 3);
+          
+          if (expenseCategories.length > 0) {
+            contextParts.push(
+              `Top Expense Categories: ${expenseCategories.map(cat => 
+                `${cat.category} (₹${cat.total.toLocaleString()})`
+              ).join(', ')}`
+            );
+          }
+        }
+      } catch (error) {
+        // Continue without financial data if there's an error
+      }
+
+      // 4. Get recent business insights
+      try {
+        const dashboardData = await DashboardService.getDashboardData(userId);
+        
+        if (dashboardData.insights.length > 0) {
+          const topInsights = dashboardData.insights.slice(0, 2);
+          contextParts.push(
+            `\nRecent Business Insights:`,
+            ...topInsights.map(insight => 
+              `- ${insight.title}: ${insight.description}`
+            )
+          );
+        }
+
+        // Add key metrics trends
+        if (dashboardData.keyMetrics.revenueChange !== undefined) {
+          const trend = dashboardData.keyMetrics.revenueChange >= 0 ? 'growing' : 'declining';
+          contextParts.push(
+            `Revenue Trend: ${trend} by ${Math.abs(dashboardData.keyMetrics.revenueChange).toFixed(1)}%`
+          );
+        }
+      } catch (error) {
+        // Continue without insights if there's an error
+      }
+
+      // 5. Get recent transaction patterns
+      try {
+        const allTransactions = await TransactionModel.findByUser(userId);
+        
+        if (allTransactions.length > 0) {
+          const totalTransactions = allTransactions.length;
+          const incomeTransactions = allTransactions.filter(t => t.type === 'income').length;
+          const expenseTransactions = allTransactions.filter(t => t.type === 'expense').length;
+          
+          contextParts.push(
+            `\nTransaction History:`,
+            `Total Transactions: ${totalTransactions}`,
+            `Income Transactions: ${incomeTransactions}`,
+            `Expense Transactions: ${expenseTransactions}`
+          );
+
+          // Get most common categories
+          const categoryCount = new Map<string, number>();
+          allTransactions.forEach(t => {
+            if (t.category) {
+              categoryCount.set(t.category, (categoryCount.get(t.category) || 0) + 1);
+            }
+          });
+
+          const topCategories = Array.from(categoryCount.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3);
+
+          if (topCategories.length > 0) {
+            contextParts.push(
+              `Most Active Categories: ${topCategories.map(([cat, count]) => 
+                `${cat} (${count} transactions)`
+              ).join(', ')}`
+            );
+          }
+        }
+      } catch (error) {
+        // Continue without transaction patterns if there's an error
+      }
+
+      return contextParts.join('\n');
+    } catch (error) {
+      console.error('Error building user context:', error);
+      return 'User context unavailable';
+    }
+  }
+
+  /**
+   * Process a user query and generate a response with full context awareness
    */
   static async processQuery(
     userId: string,
@@ -108,29 +329,51 @@ export class ConversationalAIService {
       };
     }
 
-    // Process based on intent
+    // Build comprehensive user context
+    const userContext = await this.buildUserContext(userId);
+
+    // Process based on intent with full context awareness
     try {
       const businessProfile = context?.userBusinessProfile;
       
       switch (intent) {
         case 'cost_cutting':
-          return await this.handleCostCuttingQuery(userId, businessProfile);
+          return await this.handleCostCuttingQuery(userId, businessProfile, userContext);
         
         case 'growth_strategy':
-          return await this.handleGrowthStrategyQuery(userId, businessProfile);
+          return await this.handleGrowthStrategyQuery(userId, businessProfile, userContext);
         
         case 'financial_analysis':
-          return await this.handleFinancialAnalysisQuery(userId);
+          return await this.handleFinancialAnalysisQuery(userId, userContext);
         
         case 'marketing_advice':
-          return await this.handleMarketingAdviceQuery(userId, businessProfile);
+          return await this.handleMarketingAdviceQuery(userId, businessProfile, userContext);
         
         case 'business_insights':
-          return await this.handleBusinessInsightsQuery(userId);
+          return await this.handleBusinessInsightsQuery(userId, userContext);
         
         default:
+          // For general queries, use AI with full context
+          const aiResponse = await this.getAIResponse(
+            `The user is asking: "${query}". Provide helpful business advice based on their context.`,
+            userContext
+          );
+          
+          if (aiResponse) {
+            return {
+              message: aiResponse,
+              suggestions: [
+                'Show me my financial performance',
+                'How can I grow my business?',
+                'What marketing strategies should I use?',
+                'How can I reduce costs?',
+              ],
+              requiresClarification: false,
+            };
+          }
+
           return {
-            message: 'I can help you with various aspects of your business. What would you like to know about?',
+            message: 'I can help you with various aspects of your business. Based on your profile and transaction history, I can provide personalized advice. What would you like to know about?',
             suggestions: [
               'Financial analysis and forecasting',
               'Marketing strategies and content ideas',
@@ -254,46 +497,18 @@ export class ConversationalAIService {
    */
   private static async handleCostCuttingQuery(
     userId: string,
-    businessProfile?: BusinessProfile
+    businessProfile?: BusinessProfile,
+    userContext?: string
   ): Promise<AIResponse> {
     const recommendations: string[] = [];
     const dataReferences: DataReference[] = [];
-    let contextInfo = '';
 
-    // Build context for AI
-    if (businessProfile) {
-      contextInfo = `Business: ${businessProfile.businessName}, Industry: ${businessProfile.industry}, Type: ${businessProfile.businessType}, Employees: ${businessProfile.employeeCount}`;
-    }
+    // Use comprehensive user context
+    const contextInfo = userContext || '';
 
-    // Try to get actual financial data for more specific recommendations
-    try {
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setMonth(startDate.getMonth() - 3);
-
-      const expenseBreakdown = await FinanceService.getCategoryBreakdown(
-        userId,
-        'expense',
-        { startDate, endDate }
-      );
-      
-      if (expenseBreakdown && expenseBreakdown.length > 0) {
-        const topExpenseCategory = expenseBreakdown[0];
-        contextInfo += `\nTop expense category: ${topExpenseCategory.category} (₹${topExpenseCategory.total})`;
-        
-        dataReferences.push({
-          type: 'metric',
-          id: 'top-expense-category',
-          value: topExpenseCategory,
-        });
-      }
-    } catch (error) {
-      // Continue without financial data
-    }
-
-    // Try to use Gemini for enhanced response
-    const aiPrompt = `Provide 3-5 specific, actionable cost-cutting recommendations for a small business. Focus on practical strategies that can be implemented immediately.`;
-    const aiResponse = await this.enhanceWithGemini(aiPrompt, contextInfo);
+    // Try to use AI for enhanced response with full context
+    const aiPrompt = `The user is asking for cost-cutting advice. Based on their business profile and financial data, provide 3-5 specific, actionable cost-cutting recommendations. Focus on practical strategies that can be implemented immediately and are relevant to their specific situation.`;
+    const aiResponse = await this.getAIResponse(aiPrompt, contextInfo);
 
     let message: string;
     
@@ -343,70 +558,42 @@ export class ConversationalAIService {
    */
   private static async handleGrowthStrategyQuery(
     userId: string,
-    businessProfile?: BusinessProfile
+    businessProfile?: BusinessProfile,
+    userContext?: string
   ): Promise<AIResponse> {
-    if (!businessProfile) {
+    const dataReferences: DataReference[] = [];
+
+    // Use comprehensive user context
+    const contextInfo = userContext || '';
+
+    // Try to use AI for enhanced response with full context
+    const aiPrompt = `The user is asking for growth strategies. Based on their business profile, financial performance, and transaction history, provide 3-5 specific, actionable growth strategies. Focus on practical, cost-effective strategies that can help expand their customer base and increase revenue.`;
+    const aiResponse = await this.getAIResponse(aiPrompt, contextInfo);
+
+    if (aiResponse) {
+      // Use AI-generated response
       return {
-        message: 'To provide personalized growth strategies, I need to know more about your business. Please complete your business profile first.',
+        message: aiResponse,
+        suggestions: [
+          'What marketing strategies should I use?',
+          'How can I attract more customers?',
+          'Show me my business performance',
+        ],
         requiresClarification: false,
-        suggestions: ['Set up my business profile'],
+        dataReferences: dataReferences.length > 0 ? dataReferences : undefined,
       };
     }
 
-    const dataReferences: DataReference[] = [];
-    const { industry, businessType, targetAudience, location } = businessProfile;
+    // Fall back to generic growth strategies if AI is unavailable
+    const strategies: string[] = [
+      'Expand your customer base through targeted local marketing campaigns',
+      'Leverage social media to reach more potential customers',
+      'Develop partnerships with complementary businesses',
+      'Focus on customer retention and repeat business',
+      'Optimize your pricing strategy based on market research',
+    ];
 
-    // Build context for AI
-    let contextInfo = `Business: ${businessProfile.businessName}, Industry: ${industry}, Type: ${businessType}, Target Audience: ${targetAudience}, Location: ${location}`;
-
-    // Add data-driven insights if available
-    try {
-      const dashboardData = await DashboardService.getDashboardData(userId);
-      
-      if (dashboardData.keyMetrics.revenueChange !== undefined) {
-        contextInfo += `\nRevenue trend: ${dashboardData.keyMetrics.revenueChange > 0 ? 'Growing' : 'Declining'} by ${Math.abs(dashboardData.keyMetrics.revenueChange).toFixed(1)}%`;
-      }
-
-      dataReferences.push({
-        type: 'metric',
-        id: 'revenue-trend',
-        value: dashboardData.keyMetrics.revenueChange,
-      });
-    } catch (error) {
-      // Continue without dashboard data
-    }
-
-    // Try to use Gemini for enhanced response
-    const aiPrompt = `Provide 3-5 specific, actionable growth strategies for this small business. Focus on practical, cost-effective strategies that can help expand the customer base and increase revenue.`;
-    const aiResponse = await this.enhanceWithGemini(aiPrompt, contextInfo);
-
-    let message: string;
-    
-    if (aiResponse) {
-      // Use AI-generated response
-      message = aiResponse;
-    } else {
-      // Fall back to rule-based strategies
-      const strategies: string[] = [];
-      
-      strategies.push(
-        `Expand your customer base in ${location} through targeted local marketing campaigns`,
-        `Leverage social media to reach more ${targetAudience} in your area`,
-        `Develop partnerships with complementary businesses in the ${industry} sector`
-      );
-
-      if (industry === 'retail' || industry === 'food-beverage') {
-        strategies.push(
-          'Introduce new product lines based on customer demand and seasonal trends'
-        );
-      } else if (industry === 'services') {
-        strategies.push(
-          'Offer package deals or subscription services for recurring revenue'
-        );
-      }
-
-      message = `Here are growth strategies tailored for your ${businessType} business:\n\n${strategies.map((s, i) => `${i + 1}. ${s}`).join('\n\n')}`;
-    }
+    const message = `Here are growth strategies for your business:\n\n${strategies.map((s, i) => `${i + 1}. ${s}`).join('\n\n')}`;
 
     return {
       message,
@@ -423,8 +610,29 @@ export class ConversationalAIService {
   /**
    * Handle financial analysis queries
    */
-  private static async handleFinancialAnalysisQuery(userId: string): Promise<AIResponse> {
+  private static async handleFinancialAnalysisQuery(
+    userId: string,
+    userContext?: string
+  ): Promise<AIResponse> {
     try {
+      // Use AI to provide comprehensive financial analysis with context
+      const aiPrompt = `The user is asking for financial analysis. Based on their transaction history and business data, provide a comprehensive financial analysis with insights, trends, and actionable recommendations.`;
+      const aiResponse = await this.getAIResponse(aiPrompt, userContext || '');
+
+      if (aiResponse) {
+        return {
+          message: aiResponse,
+          suggestions: [
+            'Show me my cash flow forecast',
+            'How can I reduce costs?',
+            'What are my biggest expenses?',
+            'How can I improve my profit margin?',
+          ],
+          requiresClarification: false,
+        };
+      }
+
+      // Fallback to basic metrics if AI is unavailable
       const endDate = new Date();
       const startDate = new Date();
       startDate.setMonth(startDate.getMonth() - 1);
@@ -468,41 +676,64 @@ export class ConversationalAIService {
    */
   private static async handleMarketingAdviceQuery(
     userId: string,
-    businessProfile?: BusinessProfile
+    businessProfile?: BusinessProfile,
+    userContext?: string
   ): Promise<AIResponse> {
-    if (!businessProfile) {
-      return {
-        message: 'To provide personalized marketing advice, I need to know more about your business. Please complete your business profile first.',
-        requiresClarification: false,
-        suggestions: ['Set up my business profile'],
-      };
-    }
-
     try {
-      const strategies = await MarketingService.generateStrategies(businessProfile);
-      
-      const topStrategies = strategies.slice(0, 3);
-      const strategyList = topStrategies.map((s, i) => 
-        `${i + 1}. ${s.title} (Cost: ₹${s.estimatedCost.toLocaleString()})\n   ${s.description}`
-      ).join('\n\n');
+      // Use AI to provide personalized marketing advice with full context
+      const aiPrompt = `The user is asking for marketing advice. Based on their business profile, industry, target audience, and financial performance, provide specific, actionable marketing strategies and recommendations.`;
+      const aiResponse = await this.getAIResponse(aiPrompt, userContext || '');
 
-      const message = `Here are the top marketing strategies for your business:\n\n${strategyList}\n\nWould you like detailed action steps for any of these strategies?`;
+      if (aiResponse) {
+        return {
+          message: aiResponse,
+          suggestions: [
+            'Show me content ideas',
+            'How can I use social media effectively?',
+            'What\'s my marketing budget?',
+            'How can I reach more customers?',
+          ],
+          requiresClarification: false,
+        };
+      }
+
+      // Fallback to rule-based strategies if AI is unavailable
+      if (businessProfile) {
+        const strategies = await MarketingService.generateStrategies(businessProfile);
+        
+        const topStrategies = strategies.slice(0, 3);
+        const strategyList = topStrategies.map((s, i) => 
+          `${i + 1}. ${s.title} (Cost: ₹${s.estimatedCost.toLocaleString()})\n   ${s.description}`
+        ).join('\n\n');
+
+        const message = `Here are the top marketing strategies for your business:\n\n${strategyList}\n\nWould you like detailed action steps for any of these strategies?`;
+
+        return {
+          message,
+          suggestions: [
+            'Show me content ideas',
+            'How can I use social media effectively?',
+            'What\'s my marketing budget?',
+          ],
+          requiresClarification: false,
+          dataReferences: [
+            {
+              type: 'metric',
+              id: 'marketing-strategies',
+              value: topStrategies,
+            },
+          ],
+        };
+      }
 
       return {
-        message,
+        message: 'I can help you with marketing strategies. What specific aspect of marketing are you interested in?',
         suggestions: [
-          'Show me content ideas',
-          'How can I use social media effectively?',
-          'What\'s my marketing budget?',
+          'Social media marketing',
+          'Content creation ideas',
+          'Customer engagement strategies',
         ],
         requiresClarification: false,
-        dataReferences: [
-          {
-            type: 'metric',
-            id: 'marketing-strategies',
-            value: topStrategies,
-          },
-        ],
       };
     } catch (error) {
       return {
@@ -520,8 +751,29 @@ export class ConversationalAIService {
   /**
    * Handle business insights queries
    */
-  private static async handleBusinessInsightsQuery(userId: string): Promise<AIResponse> {
+  private static async handleBusinessInsightsQuery(
+    userId: string,
+    userContext?: string
+  ): Promise<AIResponse> {
     try {
+      // Use AI to provide comprehensive business insights with full context
+      const aiPrompt = `The user is asking for business insights. Based on their complete business profile, financial performance, transaction history, and trends, provide key insights about their business performance, opportunities, and recommendations for improvement.`;
+      const aiResponse = await this.getAIResponse(aiPrompt, userContext || '');
+
+      if (aiResponse) {
+        return {
+          message: aiResponse,
+          suggestions: [
+            'Show me my dashboard',
+            'What are my alerts?',
+            'How is my business performing?',
+            'What opportunities should I focus on?',
+          ],
+          requiresClarification: false,
+        };
+      }
+
+      // Fallback to dashboard insights if AI is unavailable
       const dashboardData = await DashboardService.getDashboardData(userId);
       
       const insights = dashboardData.insights.slice(0, 3);

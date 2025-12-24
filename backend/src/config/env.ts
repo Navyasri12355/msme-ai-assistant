@@ -34,6 +34,8 @@ export const config = {
     googleApiKey: process.env.GOOGLE_API_KEY || '',
     geminiModel: process.env.GEMINI_MODEL || 'gemini-pro',
     huggingfaceApiKey: process.env.HUGGINGFACE_API_KEY || '',
+    poeApiKey: process.env.POE_API_KEY || '',
+    poeBot: process.env.POE_BOT || 'Claude-3-Haiku', // Default bot
   },
 };
 
