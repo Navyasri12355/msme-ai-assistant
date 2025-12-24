@@ -113,6 +113,23 @@ export const Navigation: React.FC = () => {
               </button>
             </Tooltip>
 
+            <Tooltip content="Manage your profile and account settings">
+              <button
+                onClick={() => navigate('/profile')}
+                className="p-2 text-gray-600 hover:text-gray-900 rounded-full hover:bg-gray-100"
+                aria-label="Profile settings"
+              >
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                  />
+                </svg>
+              </button>
+            </Tooltip>
+
             <span className="text-sm text-gray-700">{user?.email}</span>
             
             <Tooltip content="Sign out of your account">

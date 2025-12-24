@@ -52,6 +52,7 @@ app.get('/health', async (req: Request, res: Response) => {
 
 // Import routes
 import authRoutes from './routes/auth';
+import userRoutes from './routes/user';
 import businessProfileRoutes from './routes/businessProfile';
 import transactionRoutes from './routes/transaction';
 import financeRoutes from './routes/finance';
@@ -66,6 +67,9 @@ app.get('/api', (req: Request, res: Response) => {
 
 // Auth routes
 app.use('/api/auth', authRoutes);
+
+// User routes
+app.use('/api/user', userRoutes);
 
 // Business profile routes
 app.use('/api/profile', businessProfileRoutes);

@@ -7,6 +7,7 @@ import { HelpCenter } from './components/HelpCenter';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { ProfileSetup } from './pages/ProfileSetup';
+import { Profile } from './pages/Profile';
 import { Dashboard } from './pages/Dashboard';
 import { Transactions } from './pages/Transactions';
 import { FinanceDashboard } from './pages/FinanceDashboard';
@@ -26,6 +27,14 @@ function AppContent() {
           element={
             <ProtectedRoute>
               <ProfileSetup />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <Profile />
             </ProtectedRoute>
           }
         />
