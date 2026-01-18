@@ -67,16 +67,15 @@ Key guidelines:
         },
       ];
 
+      // Combine context and prompt into a single user message to maintain alternating pattern
+      let userMessage = prompt;
       if (context) {
-        messages.push({
-          role: 'user',
-          content: `Business Context: ${context}`,
-        });
+        userMessage = `Business Context: ${context}\n\nUser Question: ${prompt}`;
       }
 
       messages.push({
         role: 'user',
-        content: prompt,
+        content: userMessage,
       });
 
       // Use HTTP adapter to call OpenRouter
@@ -92,7 +91,21 @@ Key guidelines:
       return completion.choices?.[0]?.message?.content || completion?.response || null;
     } catch (error: any) {
       console.error('OpenRouter API error:', error.message);
-      return null; // Fall back to other methods
+      
+      // Check for specific error types and provide user-friendly messages
+      if (error.message?.includes('payment required') || 
+          error.message?.includes('All available free models require payment')) {
+        console.log('All OpenRouter models require payment, falling back to basic responses');
+        return null; // This will trigger the basic response fallback
+      } else if (error.message?.includes('model is currently unavailable')) {
+        throw new Error('The AI model is temporarily unavailable. Please try again in a few minutes.');
+      } else if (error.message?.includes('rate limit')) {
+        throw new Error('The AI service is temporarily busy. Please wait a moment and try again.');
+      } else if (error.response?.status >= 500) {
+        throw new Error('The AI service is temporarily unavailable. Please try again in a few minutes.');
+      }
+      
+      return null; // Fall back to other methods for other errors
     }
   }
 
@@ -110,8 +123,78 @@ Key guidelines:
       return openrouterResponse;
     }
 
-    // No AI available
-    return null;
+    // If all AI options fail, provide a basic response based on query intent
+    return this.generateBasicResponse(prompt, context);
+  }
+
+  /**
+   * Generate basic business advice when AI is unavailable
+   */
+  private static generateBasicResponse(prompt: string, context?: string): string {
+    const normalizedQuery = prompt.toLowerCase();
+    
+    // Cost cutting advice
+    if (normalizedQuery.includes('cost') || normalizedQuery.includes('expense') || normalizedQuery.includes('reduce')) {
+      return `Based on your business data, here are some cost-cutting strategies to consider:
+
+1. **Review recurring expenses** - Cancel unused subscriptions and negotiate better rates with suppliers
+2. **Optimize inventory** - Reduce excess stock and improve inventory turnover
+3. **Energy efficiency** - Switch to LED lighting and energy-efficient equipment
+4. **Digital transformation** - Use digital tools to automate manual processes
+5. **Bulk purchasing** - Negotiate volume discounts with key suppliers
+
+Focus on the largest expense categories first for maximum impact. Track your progress monthly to ensure these changes are effective.`;
+    }
+    
+    // Growth strategy advice
+    if (normalizedQuery.includes('grow') || normalizedQuery.includes('growth') || normalizedQuery.includes('expand')) {
+      return `Here are proven growth strategies for small businesses:
+
+1. **Customer retention** - Focus on keeping existing customers happy (5x cheaper than acquiring new ones)
+2. **Referral programs** - Incentivize customers to refer friends and family
+3. **Digital marketing** - Use social media and Google My Business to reach more customers
+4. **Product/service expansion** - Add complementary offerings to increase average order value
+5. **Strategic partnerships** - Collaborate with non-competing businesses to cross-promote
+
+Start with one strategy, measure results, then expand. Consistent execution is more important than trying everything at once.`;
+    }
+    
+    // Financial analysis
+    if (normalizedQuery.includes('financial') || normalizedQuery.includes('profit') || normalizedQuery.includes('revenue')) {
+      return `Key financial metrics to monitor for business health:
+
+1. **Profit Margin** - Aim for at least 20% gross profit margin
+2. **Cash Flow** - Track money in vs. money out monthly
+3. **Customer Acquisition Cost** - How much you spend to get each new customer
+4. **Customer Lifetime Value** - Total revenue from each customer relationship
+5. **Break-even Point** - When your revenue covers all expenses
+
+Review these metrics monthly and compare to previous periods. Look for trends and take action when numbers move in the wrong direction.`;
+    }
+    
+    // Marketing advice
+    if (normalizedQuery.includes('market') || normalizedQuery.includes('customer') || normalizedQuery.includes('advertise')) {
+      return `Effective marketing strategies for small businesses:
+
+1. **Know your audience** - Create detailed customer personas
+2. **Local SEO** - Optimize Google My Business and get customer reviews
+3. **Content marketing** - Share valuable tips and insights in your industry
+4. **Social media presence** - Be active on platforms where your customers spend time
+5. **Email marketing** - Stay in touch with customers through newsletters
+
+Focus on 2-3 channels initially rather than spreading yourself too thin. Consistency and quality matter more than quantity.`;
+    }
+    
+    // General business advice
+    return `Here's some general business guidance:
+
+1. **Focus on cash flow** - Monitor your money in and out carefully
+2. **Know your customers** - Regularly ask for feedback and act on it
+3. **Track key metrics** - Measure what matters to your business success
+4. **Plan ahead** - Set quarterly goals and review progress monthly
+5. **Stay adaptable** - Be ready to pivot when market conditions change
+
+The most successful businesses focus on solving real customer problems consistently and profitably. What specific area would you like to explore further?`;
   }
 
 
@@ -373,10 +456,36 @@ Key guidelines:
         };
       }
 
-      // If AI is unavailable, return error
+      // This should not happen now since getAIResponse always returns something
       throw new Error('AI service unavailable');
       
-    } catch (error) {
+    } catch (error: any) {
+      // Check for specific OpenRouter errors and provide user-friendly messages
+      if (error.message?.includes('payment required') || 
+          error.message?.includes('account limitations')) {
+        return {
+          message: 'The AI assistant is currently unavailable due to service limitations. Please try again later or contact support if this issue persists.',
+          requiresClarification: false,
+        };
+      } else if (error.message?.includes('model is currently unavailable') ||
+                 error.message?.includes('model is temporarily unavailable')) {
+        return {
+          message: 'The AI assistant model is temporarily unavailable. Please try again in a few minutes.',
+          requiresClarification: false,
+        };
+      } else if (error.message?.includes('rate limit') || 
+                 error.message?.includes('temporarily busy')) {
+        return {
+          message: 'The AI assistant is currently busy. Please wait a moment and try your question again.',
+          requiresClarification: false,
+        };
+      } else if (error.message?.includes('temporarily unavailable')) {
+        return {
+          message: 'The AI assistant is temporarily unavailable. Please try again in a few minutes.',
+          requiresClarification: false,
+        };
+      }
+      
       return {
         message: 'I\'m currently unable to process your request. Please ensure the AI service is properly configured and try again.',
         requiresClarification: false,

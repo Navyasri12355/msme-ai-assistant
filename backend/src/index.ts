@@ -59,6 +59,8 @@ import financeRoutes from './routes/finance';
 import marketingRoutes from './routes/marketing';
 import dashboardRoutes from './routes/dashboard';
 import conversationalAIRoutes from './routes/conversationalAI';
+import customerRoutes from './routes/customer';
+import productRoutes from './routes/product';
 
 // API routes
 app.get('/api', (req: Request, res: Response) => {
@@ -88,6 +90,12 @@ app.use('/api/dashboard', dashboardRoutes);
 
 // Conversational AI routes
 app.use('/api/ai', conversationalAIRoutes);
+
+// Customer routes
+app.use('/api/customers', customerRoutes);
+
+// Product routes
+app.use('/api/products', productRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

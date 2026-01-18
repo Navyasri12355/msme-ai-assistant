@@ -1,14 +1,28 @@
 # MSME AI Assistant
 
-An AI-powered business assistant designed specifically for Micro, Small, and Medium Enterprises (MSMEs). This comprehensive platform helps business owners manage their finances, get marketing insights, and receive intelligent business advice through conversational AI.
+An AI-powered business assistant designed specifically for Micro, Small, and Medium Enterprises (MSMEs). This comprehensive platform helps business owners manage their finances, customers, products, and receive intelligent business advice through conversational AI.
 
 ## 🚀 Features
 
 ### 💰 Financial Management
-- **Transaction Tracking**: Record and categorize income and expenses
+- **Transaction Tracking**: Record and categorize income and expenses with batch upload support
 - **Financial Analytics**: Real-time profit/loss analysis and cash flow insights
 - **Automated Calculations**: Profit margins, expense breakdowns, and financial trends
+- **Currency Support**: Indian Rupee (₹) formatting and calculations
 - **Secure Data**: All financial data is encrypted at rest
+
+### 👥 Customer Management
+- **Customer Database**: Comprehensive customer information management
+- **Customer Analytics**: Track customer statistics and engagement
+- **Search & Filter**: Advanced customer search and filtering capabilities
+- **Customer Insights**: Integration with transaction history for customer analysis
+
+### 📦 Product Management
+- **Product Catalog**: Complete product inventory management
+- **Stock Tracking**: Monitor stock levels with low-stock alerts
+- **Product Analytics**: Track top-performing products and revenue
+- **Category Management**: Organize products by categories
+- **Pricing Management**: Encrypted price and cost tracking
 
 ### 🤖 AI-Powered Business Advisor
 - **Conversational AI**: Natural language business queries and advice
@@ -16,12 +30,15 @@ An AI-powered business assistant designed specifically for Micro, Small, and Med
 - **Personalized Recommendations**: Tailored advice based on your industry and business size
 - **Cost-Cutting Strategies**: AI-generated suggestions to reduce expenses
 - **Growth Strategies**: Actionable recommendations for business expansion
+- **Fallback System**: Basic business advice when AI models are unavailable
 
-### 📊 Business Intelligence
+### 📊 Business Intelligence Dashboard
 - **Interactive Dashboard**: Visual representation of key business metrics
+- **Real-time Customer Count**: Accurate customer statistics from database
 - **Performance Insights**: Automated analysis of business trends
 - **Revenue Forecasting**: Predictive analytics for future performance
 - **Expense Analysis**: Detailed breakdown of spending patterns
+- **Product Performance**: Top products by revenue and sales volume
 
 ### 📈 Marketing Support
 - **Marketing Strategy Generator**: Industry-specific marketing recommendations
@@ -33,6 +50,31 @@ An AI-powered business assistant designed specifically for Micro, Small, and Med
 - **Secure Authentication**: JWT-based authentication with bcrypt password hashing
 - **Business Profiles**: Comprehensive business information management
 - **Multi-tenant Architecture**: Secure data isolation between users
+
+## 🌟 Key Highlights
+
+### 🎯 MSME-Focused Design
+- **Tailored for Small Businesses**: Every feature designed specifically for MSME needs
+- **Cost-Effective Solutions**: Emphasis on budget-friendly strategies and tools
+- **Indian Market Ready**: INR currency support and local business context
+
+### 🤖 Intelligent AI System
+- **Multiple Model Fallbacks**: Automatic switching between AI models for reliability
+- **Context-Aware Advice**: AI understands your specific business situation
+- **Graceful Degradation**: Provides basic business advice when AI is unavailable
+- **Smart Error Handling**: Robust error recovery and user-friendly messages
+
+### 🔒 Enterprise-Grade Security
+- **Data Encryption**: AES-256-GCM encryption for sensitive financial data
+- **Secure Authentication**: JWT tokens with refresh mechanism
+- **Input Validation**: Comprehensive validation using Zod schemas
+- **Rate Limiting**: Protection against API abuse
+
+### 📊 Comprehensive Analytics
+- **Real-Time Dashboard**: Live business metrics and insights
+- **Customer Intelligence**: Track customer behavior and engagement
+- **Product Performance**: Monitor inventory and sales analytics
+- **Financial Forecasting**: Predictive analytics for business planning
 
 ## 🏗️ Architecture
 
@@ -67,8 +109,9 @@ msme-ai-assistant/
 │   ├── src/
 │   │   ├── config/         # Database, Redis, environment configuration
 │   │   ├── middleware/     # Authentication, validation, error handling
-│   │   ├── models/         # Data models (User, Transaction, BusinessProfile)
+│   │   ├── models/         # Data models (User, Transaction, Customer, Product, BusinessProfile)
 │   │   ├── routes/         # API route handlers
+│   │   ├── schemas/        # Validation schemas (Zod)
 │   │   ├── services/       # Business logic and AI services
 │   │   ├── types/          # TypeScript type definitions
 │   │   └── utils/          # Utility functions (encryption, caching)
@@ -79,10 +122,11 @@ msme-ai-assistant/
 │   │   ├── api/           # API client functions
 │   │   ├── components/    # Reusable React components
 │   │   ├── contexts/      # React context providers
-│   │   ├── pages/         # Page components
+│   │   ├── pages/         # Page components (Dashboard, Customers, Products, etc.)
 │   │   ├── types/         # TypeScript type definitions
 │   │   └── utils/         # Utility functions
 │   └── package.json
+├── data/                  # Sample data files
 ├── scripts/               # Setup and utility scripts
 ├── docker-compose.yml     # Docker services configuration
 └── package.json          # Root package.json with workspaces
@@ -266,23 +310,41 @@ docker exec -it msme-redis redis-cli
 
 ```env
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
-OPENROUTER_MODEL=meta-llama/llama-3.2-3b-instruct:free
+OPENROUTER_MODEL=xiaomi/mimo-v2-flash:free
 ```
+
+**Important Notes:**
+- **Free Tier Limitations**: OpenRouter's free models have limited quotas and may require account verification
+- **Fallback System**: If AI models are unavailable, the system provides basic business advice
+- **Multiple Models**: The system tries multiple free models automatically if one fails
+- **Account Issues**: New accounts may experience 402 errors initially - this is normal and the system handles it gracefully
+
+**Troubleshooting:**
+- If you get 402 errors with a new account, the system will use basic responses
+- Check your OpenRouter dashboard for usage and account status
+- Free models may be temporarily unavailable due to high demand
 
 ### Available Models
 
-**Free Models:**
+The system uses a robust fallback system with multiple free models:
+
+**Primary Model:**
+- `xiaomi/mimo-v2-flash:free` (Fast and efficient)
+
+**Fallback Models:**
 - `meta-llama/llama-3.2-3b-instruct:free`
 - `meta-llama/llama-3.2-1b-instruct:free`
-- `google/gemma-2-9b-it:free`
 - `microsoft/phi-3-mini-128k-instruct:free`
+- `qwen/qwen-2-7b-instruct:free`
+- `huggingfaceh4/zephyr-7b-beta:free`
+- `openchat/openchat-7b:free`
 
 **Paid Models (Better Performance):**
 - `openai/gpt-4o-mini`
 - `anthropic/claude-3-haiku`
 - `meta-llama/llama-3.1-70b-instruct`
 
-## 📊 API Documentation
+### API Documentation
 
 ### Authentication Endpoints
 
@@ -305,11 +367,32 @@ DELETE /api/business-profile     # Delete business profile
 ### Transaction Endpoints
 
 ```
-GET    /api/transactions          # Get user's transactions
+GET    /api/transactions          # Get user's transactions with filters
 POST   /api/transactions          # Create new transaction
+POST   /api/transactions/batch    # Create multiple transactions
 PUT    /api/transactions/:id      # Update transaction
 DELETE /api/transactions/:id      # Delete transaction
-GET    /api/transactions/summary  # Get transaction summary
+```
+
+### Customer Management Endpoints
+
+```
+GET    /api/customers             # Get user's customers with search/filter
+POST   /api/customers             # Create new customer
+PUT    /api/customers/:id         # Update customer
+DELETE /api/customers/:id         # Delete customer
+GET    /api/customers/stats       # Get customer statistics
+```
+
+### Product Management Endpoints
+
+```
+GET    /api/products              # Get user's products with filters
+POST   /api/products              # Create new product
+PUT    /api/products/:id          # Update product
+DELETE /api/products/:id          # Delete product
+GET    /api/products/stats        # Get product statistics
+GET    /api/products/categories   # Get product categories
 ```
 
 ### AI Chat Endpoints
@@ -323,9 +406,11 @@ DELETE /api/conversational-ai/history # Clear conversation history
 ### Dashboard Endpoints
 
 ```
-GET /api/dashboard/metrics    # Get key business metrics
-GET /api/dashboard/insights   # Get AI-generated insights
-GET /api/dashboard/trends     # Get performance trends
+GET /api/dashboard               # Get complete dashboard data
+GET /api/dashboard/metrics       # Get key business metrics
+GET /api/dashboard/insights      # Get AI-generated insights
+GET /api/dashboard/trends        # Get performance trends
+POST /api/dashboard/refresh      # Refresh dashboard metrics
 ```
 
 ### Marketing Endpoints
@@ -334,6 +419,14 @@ GET /api/dashboard/trends     # Get performance trends
 GET  /api/marketing/strategies     # Get marketing strategies
 GET  /api/marketing/content        # Get content suggestions
 POST /api/marketing/sentiment      # Analyze customer sentiment
+```
+
+### Finance Endpoints
+
+```
+GET /api/finance/summary          # Get financial summary
+GET /api/finance/trends           # Get financial trends
+GET /api/finance/forecast         # Get financial forecasts
 ```
 
 ## 🔒 Security Features
@@ -531,13 +624,17 @@ For support and questions:
 ## 🔄 Changelog
 
 ### Version 1.0.0
-- Initial release
 - Complete MSME business management platform
-- AI-powered business advisor
-- Financial tracking and analytics
+- AI-powered business advisor with fallback system
+- Financial tracking and analytics with INR currency support
+- Customer management system with search and analytics
+- Product management with inventory tracking
 - Marketing strategy generator
+- Interactive dashboard with real-time metrics
 - Secure user authentication and data encryption
 - Docker-based development environment
+- Batch transaction upload support
+- Comprehensive error handling and recovery
 
 ---
 

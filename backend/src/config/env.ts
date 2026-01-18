@@ -32,7 +32,16 @@ export const config = {
   
   ai: {
     openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
-    openrouterModel: process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.2-3b-instruct:free',
+    openrouterModel: process.env.OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free',
+    fallbackModels: [
+      'xiaomi/mimo-v2-flash:free',
+      'meta-llama/llama-3.2-3b-instruct:free',
+      'meta-llama/llama-3.2-1b-instruct:free',
+      'microsoft/phi-3-mini-128k-instruct:free',
+      'qwen/qwen-2-7b-instruct:free',
+      'huggingfaceh4/zephyr-7b-beta:free',
+      'openchat/openchat-7b:free'
+    ],
   },
 };
 

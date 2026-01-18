@@ -1,6 +1,8 @@
 import { TransactionModel } from '../models/Transaction';
+import { CustomerModel } from '../models/Customer';
 import { FinanceService, DateRange } from './financeService';
 import { CacheService, CacheKeys, CacheTTL } from '../utils/cache';
+import { pool } from '../config/database';
 
 export interface KeyMetrics {
   dailyRevenue: number; // Actually represents last 30 days revenue
@@ -150,18 +152,24 @@ export class DashboardService {
       previousRange
     );
 
-    // Calculate customer count (unique customer IDs)
-    const currentCustomers = new Set(
-      currentTransactions
-        .filter(t => t.customerId)
-        .map(t => t.customerId)
-    ).size;
+    // Get actual customer count from customers table
+    const customerModel = new CustomerModel(pool);
+    const customerStats = await customerModel.getStats(userId);
+    const currentCustomers = customerStats.total;
 
-    const previousCustomers = new Set(
-      previousTransactions
-        .filter(t => t.customerId)
-        .map(t => t.customerId)
-    ).size;
+    // For customer change calculation, we'll use a simpler approach
+    // Count customers created in the current vs previous period
+    const currentPeriodCustomers = await customerModel.findByUserId(userId, {
+      // This is a simplified approach - ideally we'd filter by creation date
+    });
+    
+    const currentPeriodCustomerCount = currentPeriodCustomers.filter(c => 
+      new Date(c.created_at) >= currentStart && new Date(c.created_at) <= currentEnd
+    ).length;
+
+    const previousPeriodCustomerCount = currentPeriodCustomers.filter(c => 
+      new Date(c.created_at) >= previousStart && new Date(c.created_at) < currentStart
+    ).length;
 
     // Calculate top products from current period
     const topProducts = this.calculateTopProducts(currentTransactions);
@@ -171,8 +179,8 @@ export class DashboardService {
       ? ((currentMetrics.totalIncome - previousMetrics.totalIncome) / previousMetrics.totalIncome) * 100
       : 0;
 
-    const customerChange = previousCustomers > 0
-      ? ((currentCustomers - previousCustomers) / previousCustomers) * 100
+    const customerChange = previousPeriodCustomerCount > 0
+      ? ((currentPeriodCustomerCount - previousPeriodCustomerCount) / previousPeriodCustomerCount) * 100
       : 0;
 
     return {
@@ -296,17 +304,21 @@ export class DashboardService {
           direction: this.calculateDirection(current, previous)
         });
       } else if (metric === 'customers') {
-        const currentCustomers = new Set(
-          currentTransactions
-            .filter(t => t.customerId)
-            .map(t => t.customerId)
-        ).size;
+        // Get actual customer count from customers table
+        const customerModel = new CustomerModel(pool);
+        const customerStats = await customerModel.getStats(userId);
+        const totalCustomers = customerStats.total;
 
-        const previousCustomers = new Set(
-          previousTransactions
-            .filter(t => t.customerId)
-            .map(t => t.customerId)
-        ).size;
+        // For trends, we'll compare customers created in current vs previous period
+        const allCustomers = await customerModel.findByUserId(userId);
+        
+        const currentCustomers = allCustomers.filter(c => 
+          new Date(c.created_at) >= currentRange.startDate && new Date(c.created_at) <= currentRange.endDate
+        ).length;
+
+        const previousCustomers = allCustomers.filter(c => 
+          new Date(c.created_at) >= previousRange.startDate && new Date(c.created_at) <= previousRange.endDate
+        ).length;
 
         const change = previousCustomers > 0
           ? ((currentCustomers - previousCustomers) / previousCustomers) * 100
@@ -314,8 +326,8 @@ export class DashboardService {
 
         trends.push({
           metric: 'customers',
-          current: currentCustomers,
-          previous: previousCustomers,
+          current: totalCustomers, // Show total customers as current value
+          previous: totalCustomers - currentCustomers + previousCustomers, // Approximate previous total
           change,
           direction: this.calculateDirection(currentCustomers, previousCustomers)
         });
@@ -527,7 +539,8 @@ export class DashboardService {
       const revenueChange = ((currentMetrics.totalIncome - previousMetrics.totalIncome) / previousMetrics.totalIncome) * 100;
       
       if (revenueChange < -10) {
-        // Identify likely cause
+        // For now, use a simplified approach for customer change analysis
+        // We'll use transaction-based customer counting as a fallback
         const currentCustomers = new Set(currentTransactions.filter(t => t.customerId).map(t => t.customerId)).size;
         const previousCustomers = new Set(previousTransactions.filter(t => t.customerId).map(t => t.customerId)).size;
         const customerChange = previousCustomers > 0 ? ((currentCustomers - previousCustomers) / previousCustomers) * 100 : 0;

@@ -121,3 +121,34 @@ export interface ConversationContext {
   userBusinessProfile?: BusinessProfile;
   currentTopic?: string;
 }
+
+// Customer types
+export interface Customer {
+  id: string;
+  user_id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  notes?: string;
+  status: 'active' | 'inactive';
+  created_at: string;
+  updated_at: string;
+}
+
+// Product types
+export interface Product {
+  id: string;
+  user_id: string;
+  name: string;
+  description?: string;
+  sku?: string;
+  price: number;
+  cost?: number;
+  category?: string;
+  stock_quantity: number;
+  unit: string;
+  status: 'active' | 'inactive' | 'discontinued';
+  created_at: string;
+  updated_at: string;
+}

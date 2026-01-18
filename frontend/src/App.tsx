@@ -13,6 +13,8 @@ import { Transactions } from './pages/Transactions';
 import { FinanceDashboard } from './pages/FinanceDashboard';
 import { Marketing } from './pages/Marketing';
 import { Chat } from './pages/Chat';
+import { Customers } from './pages/Customers';
+import { Products } from './pages/Products';
 
 function AppContent() {
   const { showOnboarding, completeOnboarding, skipOnboarding, showHelpCenter, closeHelpCenter } = useOnboarding();
@@ -75,6 +77,22 @@ function AppContent() {
           element={
             <ProtectedRoute>
               <Chat />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/customers"
+          element={
+            <ProtectedRoute>
+              <Customers />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/products"
+          element={
+            <ProtectedRoute>
+              <Products />
             </ProtectedRoute>
           }
         />

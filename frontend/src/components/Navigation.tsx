@@ -68,6 +68,24 @@ export const Navigation: React.FC = () => {
                 </button>
               </Tooltip>
 
+              <Tooltip content="Manage your customers and contacts">
+                <button
+                  onClick={() => navigate('/customers')}
+                  className={navLinkClass('/customers')}
+                >
+                  Customers
+                </button>
+              </Tooltip>
+
+              <Tooltip content="Manage your product catalog and inventory">
+                <button
+                  onClick={() => navigate('/products')}
+                  className={navLinkClass('/products')}
+                >
+                  Products
+                </button>
+              </Tooltip>
+
               <Tooltip content="Ask questions and get AI-powered business advice">
                 <button
                   onClick={() => navigate('/chat')}
