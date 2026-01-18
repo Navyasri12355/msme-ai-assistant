@@ -31,11 +31,8 @@ export const config = {
   },
   
   ai: {
-    googleApiKey: process.env.GOOGLE_API_KEY || '',
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-pro',
-    huggingfaceApiKey: process.env.HUGGINGFACE_API_KEY || '',
-    poeApiKey: process.env.POE_API_KEY || '',
-    poeBot: process.env.POE_BOT || 'Claude-3-Haiku', // Default bot
+    openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
+    openrouterModel: process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.2-3b-instruct:free',
   },
 };
 

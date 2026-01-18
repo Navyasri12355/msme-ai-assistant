@@ -8,7 +8,7 @@ import {
 import { FinanceService } from './financeService';
 import { MarketingService } from './marketingService';
 import { DashboardService } from './dashboardService';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { initOpenRouter, createChatCompletion, isInitialized } from './openrouterClient';
 import config from '../config/env';
 import axios from 'axios';
 import { pool } from '../config/database';
@@ -20,27 +20,31 @@ import { BusinessProfileModel } from '../models/BusinessProfile';
  * Processes natural language business queries and provides contextual responses
  */
 export class ConversationalAIService {
-  private static genAI: GoogleGenerativeAI | null = null;
+  private static initialized: boolean = false;
 
   /**
-   * Initialize Gemini AI if API key is available
+   * Initialize OpenRouter HTTP adapter if API key is available
    */
-  private static initializeGemini(): void {
-    if (!this.genAI && config.ai.googleApiKey) {
-      this.genAI = new GoogleGenerativeAI(config.ai.googleApiKey);
+  private static initializeOpenRouter(): void {
+    if (!this.initialized && config.ai.openrouterApiKey) {
+      initOpenRouter(config.ai.openrouterApiKey);
+      this.initialized = isInitialized();
     }
   }
 
+  
+
   /**
-   * Use Poe API to generate AI responses
+   * Use OpenRouter model to generate AI responses
    */
-  private static async enhanceWithPoe(
+  private static async enhanceWithOpenRouter(
     prompt: string,
-    context?: string,
-    botName: string = config.ai.poeBot
+    context?: string
   ): Promise<string | null> {
     try {
-      if (!config.ai.poeApiKey) {
+      this.initializeOpenRouter();
+      
+      if (!this.initialized) {
         return null; // Fall back to other methods
       }
 
@@ -52,30 +56,46 @@ Key guidelines:
 - Focus on actionable recommendations
 - Use specific numbers and data when available
 - Maintain a professional yet friendly tone
-- Prioritize cost-effective solutions for small businesses`;
+- Prioritize cost-effective solutions for small businesses
+- Provide step-by-step guidance when appropriate
+- Reference the user's specific business context when giving advice`;
 
-      const fullPrompt = context 
-        ? `${systemPrompt}\n\nBusiness Context: ${context}\n\nUser Query: ${prompt}`
-        : `${systemPrompt}\n\nUser Query: ${prompt}`;
-
-      const response = await axios.post('https://api.poe.com/bot/chat', {
-        bot: botName,
-        query: fullPrompt,
-        conversation_id: null, // Start new conversation each time
-      }, {
-        headers: {
-          'Authorization': `Bearer ${config.ai.poeApiKey}`,
-          'Content-Type': 'application/json',
+      const messages: any[] = [
+        {
+          role: 'system',
+          content: systemPrompt,
         },
-        timeout: 30000, // 30 second timeout
+      ];
+
+      if (context) {
+        messages.push({
+          role: 'user',
+          content: `Business Context: ${context}`,
+        });
+      }
+
+      messages.push({
+        role: 'user',
+        content: prompt,
       });
 
-      return response.data.text || null;
+      // Use HTTP adapter to call OpenRouter
+      const completion = await createChatCompletion({
+        model: config.ai.openrouterModel,
+        messages,
+        max_tokens: 1000,
+        temperature: 0.7,
+        top_p: 0.9,
+      });
+
+      // Normalize response (depends on provider shape)
+      return completion.choices?.[0]?.message?.content || completion?.response || null;
     } catch (error: any) {
-      console.error('Poe API error:', error.response?.data || error.message);
+      console.error('OpenRouter API error:', error.message);
       return null; // Fall back to other methods
     }
   }
+
 
   /**
    * Enhanced AI response with multiple fallback options
@@ -84,50 +104,16 @@ Key guidelines:
     prompt: string,
     context?: string
   ): Promise<string | null> {
-    // Try Poe first (if available)
-    const poeResponse = await this.enhanceWithPoe(prompt, context);
-    if (poeResponse) {
-      return poeResponse;
-    }
-
-    // Fall back to Gemini
-    const geminiResponse = await this.enhanceWithGemini(prompt, context);
-    if (geminiResponse) {
-      return geminiResponse;
+    // Try OpenRouter model first (if available)
+    const openrouterResponse = await this.enhanceWithOpenRouter(prompt, context);
+    if (openrouterResponse) {
+      return openrouterResponse;
     }
 
     // No AI available
     return null;
   }
 
-  /**
-   * Use Gemini to enhance response with AI-generated content
-   */
-  private static async enhanceWithGemini(
-    prompt: string,
-    context?: string
-  ): Promise<string | null> {
-    try {
-      this.initializeGemini();
-      
-      if (!this.genAI) {
-        return null; // Fall back to rule-based responses
-      }
-
-      const model = this.genAI.getGenerativeModel({ model: config.ai.geminiModel });
-      
-      const fullPrompt = context 
-        ? `Context: ${context}\n\nUser Query: ${prompt}\n\nProvide a helpful, concise business advice response in 2-3 paragraphs.`
-        : prompt;
-
-      const result = await model.generateContent(fullPrompt);
-      const response = await result.response;
-      return response.text();
-    } catch (error) {
-      console.error('Gemini API error:', error);
-      return null; // Fall back to rule-based responses
-    }
-  }
 
   /**
    * Build comprehensive user context automatically
@@ -288,7 +274,7 @@ Key guidelines:
     // Validate query
     if (!query || query.trim().length === 0) {
       return {
-        message: 'I didn\'t receive a question. Could you please ask me something about your business?',
+        message: 'Please ask me a question about your business.',
         requiresClarification: false,
       };
     }
@@ -296,12 +282,25 @@ Key guidelines:
     // Check query length
     if (query.length > 500) {
       return {
-        message: 'Your question is quite long. Could you please rephrase it in a shorter way?',
+        message: 'Please keep your question under 500 characters.',
         requiresClarification: false,
       };
     }
 
     const normalizedQuery = query.toLowerCase().trim();
+
+    // Get recent conversation history for context
+    const conversationHistory = await this.getConversationHistory(userId, 5);
+    
+    // Build comprehensive user context
+    const userContext = await this.buildUserContext(userId);
+    
+    // Check if this is a follow-up question
+    const isFollowUp = this.isFollowUpQuestion(normalizedQuery, conversationHistory);
+    
+    if (isFollowUp) {
+      return await this.handleFollowUpQuestion(userId, query, conversationHistory, userContext);
+    }
 
     // Detect query intent
     const intent = this.detectIntent(normalizedQuery);
@@ -309,7 +308,7 @@ Key guidelines:
     // Check if query is out of domain
     if (intent === 'out_of_domain') {
       return {
-        message: 'I specialize in helping with business-related questions like financial analysis, marketing strategies, and business insights. Could you ask me something about your business operations, finances, or marketing?',
+        message: 'I specialize in business advice. Please ask about your finances, marketing, operations, or growth strategies.',
         suggestions: [
           'How can I reduce my costs?',
           'What marketing strategies would work for my business?',
@@ -323,70 +322,63 @@ Key guidelines:
     // Check if query is ambiguous
     if (this.isAmbiguous(normalizedQuery)) {
       return {
-        message: 'I want to help, but I need a bit more information to give you the best answer.',
+        message: 'Could you be more specific about what you\'d like to know?',
         requiresClarification: true,
         clarificationQuestions: this.getClarificationQuestions(intent),
       };
     }
 
-    // Build comprehensive user context
-    const userContext = await this.buildUserContext(userId);
-
-    // Process based on intent with full context awareness
+    // Process with AI - no fallbacks
     try {
       const businessProfile = context?.userBusinessProfile;
+      const conversationContext = this.buildConversationContext(conversationHistory);
       
+      // Create comprehensive prompt based on intent
+      let aiPrompt = '';
       switch (intent) {
         case 'cost_cutting':
-          return await this.handleCostCuttingQuery(userId, businessProfile, userContext);
-        
+          aiPrompt = `The user is asking for cost-cutting advice. Based on their business profile and financial data, provide 3-5 specific, actionable cost-cutting recommendations. Focus on practical strategies that can be implemented immediately.`;
+          break;
         case 'growth_strategy':
-          return await this.handleGrowthStrategyQuery(userId, businessProfile, userContext);
-        
+          aiPrompt = `The user is asking for growth strategies. Based on their business profile, financial performance, and transaction history, provide 3-5 specific, actionable growth strategies. Focus on practical, cost-effective strategies.`;
+          break;
         case 'financial_analysis':
-          return await this.handleFinancialAnalysisQuery(userId, userContext);
-        
+          aiPrompt = `The user is asking for financial analysis. Based on their transaction history and business data, provide a comprehensive financial analysis with insights, trends, and actionable recommendations.`;
+          break;
         case 'marketing_advice':
-          return await this.handleMarketingAdviceQuery(userId, businessProfile, userContext);
-        
+          aiPrompt = `The user is asking for marketing advice. Based on their business profile, industry, target audience, and financial performance, provide specific, actionable marketing strategies and recommendations.`;
+          break;
         case 'business_insights':
-          return await this.handleBusinessInsightsQuery(userId, userContext);
-        
+          aiPrompt = `The user is asking for business insights. Based on their complete business profile, financial performance, transaction history, and trends, provide key insights about their business performance and opportunities.`;
+          break;
         default:
-          // For general queries, use AI with full context
-          const aiResponse = await this.getAIResponse(
-            `The user is asking: "${query}". Provide helpful business advice based on their context.`,
-            userContext
-          );
-          
-          if (aiResponse) {
-            return {
-              message: aiResponse,
-              suggestions: [
-                'Show me my financial performance',
-                'How can I grow my business?',
-                'What marketing strategies should I use?',
-                'How can I reduce costs?',
-              ],
-              requiresClarification: false,
-            };
-          }
-
-          return {
-            message: 'I can help you with various aspects of your business. Based on your profile and transaction history, I can provide personalized advice. What would you like to know about?',
-            suggestions: [
-              'Financial analysis and forecasting',
-              'Marketing strategies and content ideas',
-              'Cost reduction opportunities',
-              'Growth strategies',
-              'Business performance insights',
-            ],
-            requiresClarification: false,
-          };
+          aiPrompt = `The user is asking: "${query}". Provide helpful business advice based on their context.`;
       }
+
+      const aiResponse = await this.getAIResponse(
+        aiPrompt,
+        `${userContext}\n\nRecent conversation:\n${conversationContext}`
+      );
+      
+      if (aiResponse) {
+        return {
+          message: aiResponse,
+          suggestions: [
+            'Tell me more about this',
+            'What are the next steps?',
+            'How do I implement this?',
+            'What else should I consider?',
+          ],
+          requiresClarification: false,
+        };
+      }
+
+      // If AI is unavailable, return error
+      throw new Error('AI service unavailable');
+      
     } catch (error) {
       return {
-        message: 'I encountered an issue while processing your request. Please try again or rephrase your question.',
+        message: 'I\'m currently unable to process your request. Please ensure the AI service is properly configured and try again.',
         requiresClarification: false,
       };
     }
@@ -500,57 +492,26 @@ Key guidelines:
     businessProfile?: BusinessProfile,
     userContext?: string
   ): Promise<AIResponse> {
-    const recommendations: string[] = [];
-    const dataReferences: DataReference[] = [];
-
-    // Use comprehensive user context
     const contextInfo = userContext || '';
 
-    // Try to use AI for enhanced response with full context
-    const aiPrompt = `The user is asking for cost-cutting advice. Based on their business profile and financial data, provide 3-5 specific, actionable cost-cutting recommendations. Focus on practical strategies that can be implemented immediately and are relevant to their specific situation.`;
+    // Use AI for enhanced response with full context
+    const aiPrompt = `The user is asking for cost-cutting advice. Based on their business profile and financial data, provide 3-5 specific, actionable cost-cutting recommendations. Focus on practical strategies that can be implemented immediately and are relevant to their specific situation. Include specific steps and expected savings where possible.`;
     const aiResponse = await this.getAIResponse(aiPrompt, contextInfo);
 
-    let message: string;
-    
     if (aiResponse) {
-      // Use AI-generated response
-      message = aiResponse;
-    } else {
-      // Fall back to rule-based recommendations
-      recommendations.push(
-        'Review your recurring expenses and negotiate better rates with suppliers',
-        'Optimize inventory management to reduce waste and storage costs',
-        'Consider energy-efficient equipment to lower utility bills'
-      );
-
-      if (businessProfile) {
-        if (businessProfile.industry === 'retail' || businessProfile.industry === 'food-beverage') {
-          recommendations.push(
-            'Implement just-in-time inventory to reduce spoilage and storage costs',
-            'Use digital marketing instead of traditional advertising to reduce marketing expenses'
-          );
-        }
-        
-        if (businessProfile.employeeCount > 5) {
-          recommendations.push(
-            'Cross-train employees to improve flexibility and reduce overtime costs'
-          );
-        }
-      }
-
-      message = `Based on your business, here are specific cost-cutting strategies:\n\n${recommendations.map((rec, i) => `${i + 1}. ${rec}`).join('\n\n')}`;
+      return {
+        message: aiResponse,
+        suggestions: [
+          'How can I optimize inventory management?',
+          'What are my biggest expenses?',
+          'How can I negotiate better supplier rates?',
+          'Show me energy-saving opportunities',
+        ],
+        requiresClarification: false,
+      };
     }
 
-    return {
-      message,
-      suggestions: [
-        'Show me my expense breakdown',
-        'What are my biggest expenses?',
-        'How can I improve my profit margin?',
-      ],
-      requiresClarification: false,
-      dataReferences: dataReferences.length > 0 ? dataReferences : undefined,
-    };
+    throw new Error('AI service unavailable for cost-cutting analysis');
   }
 
   /**
@@ -561,17 +522,13 @@ Key guidelines:
     businessProfile?: BusinessProfile,
     userContext?: string
   ): Promise<AIResponse> {
-    const dataReferences: DataReference[] = [];
-
-    // Use comprehensive user context
     const contextInfo = userContext || '';
 
-    // Try to use AI for enhanced response with full context
+    // Use AI for enhanced response with full context
     const aiPrompt = `The user is asking for growth strategies. Based on their business profile, financial performance, and transaction history, provide 3-5 specific, actionable growth strategies. Focus on practical, cost-effective strategies that can help expand their customer base and increase revenue.`;
     const aiResponse = await this.getAIResponse(aiPrompt, contextInfo);
 
     if (aiResponse) {
-      // Use AI-generated response
       return {
         message: aiResponse,
         suggestions: [
@@ -580,31 +537,10 @@ Key guidelines:
           'Show me my business performance',
         ],
         requiresClarification: false,
-        dataReferences: dataReferences.length > 0 ? dataReferences : undefined,
       };
     }
 
-    // Fall back to generic growth strategies if AI is unavailable
-    const strategies: string[] = [
-      'Expand your customer base through targeted local marketing campaigns',
-      'Leverage social media to reach more potential customers',
-      'Develop partnerships with complementary businesses',
-      'Focus on customer retention and repeat business',
-      'Optimize your pricing strategy based on market research',
-    ];
-
-    const message = `Here are growth strategies for your business:\n\n${strategies.map((s, i) => `${i + 1}. ${s}`).join('\n\n')}`;
-
-    return {
-      message,
-      suggestions: [
-        'What marketing strategies should I use?',
-        'How can I attract more customers?',
-        'Show me my business performance',
-      ],
-      requiresClarification: false,
-      dataReferences: dataReferences.length > 0 ? dataReferences : undefined,
-    };
+    throw new Error('AI service unavailable for growth strategy analysis');
   }
 
   /**
@@ -614,61 +550,24 @@ Key guidelines:
     userId: string,
     userContext?: string
   ): Promise<AIResponse> {
-    try {
-      // Use AI to provide comprehensive financial analysis with context
-      const aiPrompt = `The user is asking for financial analysis. Based on their transaction history and business data, provide a comprehensive financial analysis with insights, trends, and actionable recommendations.`;
-      const aiResponse = await this.getAIResponse(aiPrompt, userContext || '');
+    // Use AI to provide comprehensive financial analysis with context
+    const aiPrompt = `The user is asking for financial analysis. Based on their transaction history and business data, provide a comprehensive financial analysis with insights, trends, and actionable recommendations.`;
+    const aiResponse = await this.getAIResponse(aiPrompt, userContext || '');
 
-      if (aiResponse) {
-        return {
-          message: aiResponse,
-          suggestions: [
-            'Show me my cash flow forecast',
-            'How can I reduce costs?',
-            'What are my biggest expenses?',
-            'How can I improve my profit margin?',
-          ],
-          requiresClarification: false,
-        };
-      }
-
-      // Fallback to basic metrics if AI is unavailable
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setMonth(startDate.getMonth() - 1);
-
-      const metrics = await FinanceService.calculateMetrics(userId, { startDate, endDate });
-      
-      const message = `Here's your financial summary for the last month:\n\n` +
-        `💰 Total Income: ₹${metrics.totalIncome.toLocaleString()}\n` +
-        `💸 Total Expenses: ₹${metrics.totalExpenses.toLocaleString()}\n` +
-        `📊 Net Profit: ₹${metrics.netProfit.toLocaleString()}\n` +
-        `📈 Profit Margin: ${metrics.profitMargin.toFixed(1)}%\n\n` +
-        `${metrics.netProfit > 0 ? 'Great job! Your business is profitable.' : 'Your expenses exceed income. Let\'s work on improving this.'}`;
-
+    if (aiResponse) {
       return {
-        message,
+        message: aiResponse,
         suggestions: [
           'Show me my cash flow forecast',
           'How can I reduce costs?',
           'What are my biggest expenses?',
+          'How can I improve my profit margin?',
         ],
-        requiresClarification: false,
-        dataReferences: [
-          {
-            type: 'metric',
-            id: 'financial-summary',
-            value: metrics,
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        message: 'I need transaction data to provide financial analysis. Please upload your transactions first.',
-        suggestions: ['How do I upload transactions?'],
         requiresClarification: false,
       };
     }
+
+    throw new Error('AI service unavailable for financial analysis');
   }
 
   /**
@@ -679,73 +578,24 @@ Key guidelines:
     businessProfile?: BusinessProfile,
     userContext?: string
   ): Promise<AIResponse> {
-    try {
-      // Use AI to provide personalized marketing advice with full context
-      const aiPrompt = `The user is asking for marketing advice. Based on their business profile, industry, target audience, and financial performance, provide specific, actionable marketing strategies and recommendations.`;
-      const aiResponse = await this.getAIResponse(aiPrompt, userContext || '');
+    // Use AI to provide personalized marketing advice with full context
+    const aiPrompt = `The user is asking for marketing advice. Based on their business profile, industry, target audience, and financial performance, provide specific, actionable marketing strategies and recommendations.`;
+    const aiResponse = await this.getAIResponse(aiPrompt, userContext || '');
 
-      if (aiResponse) {
-        return {
-          message: aiResponse,
-          suggestions: [
-            'Show me content ideas',
-            'How can I use social media effectively?',
-            'What\'s my marketing budget?',
-            'How can I reach more customers?',
-          ],
-          requiresClarification: false,
-        };
-      }
-
-      // Fallback to rule-based strategies if AI is unavailable
-      if (businessProfile) {
-        const strategies = await MarketingService.generateStrategies(businessProfile);
-        
-        const topStrategies = strategies.slice(0, 3);
-        const strategyList = topStrategies.map((s, i) => 
-          `${i + 1}. ${s.title} (Cost: ₹${s.estimatedCost.toLocaleString()})\n   ${s.description}`
-        ).join('\n\n');
-
-        const message = `Here are the top marketing strategies for your business:\n\n${strategyList}\n\nWould you like detailed action steps for any of these strategies?`;
-
-        return {
-          message,
-          suggestions: [
-            'Show me content ideas',
-            'How can I use social media effectively?',
-            'What\'s my marketing budget?',
-          ],
-          requiresClarification: false,
-          dataReferences: [
-            {
-              type: 'metric',
-              id: 'marketing-strategies',
-              value: topStrategies,
-            },
-          ],
-        };
-      }
-
+    if (aiResponse) {
       return {
-        message: 'I can help you with marketing strategies. What specific aspect of marketing are you interested in?',
+        message: aiResponse,
         suggestions: [
-          'Social media marketing',
-          'Content creation ideas',
-          'Customer engagement strategies',
-        ],
-        requiresClarification: false,
-      };
-    } catch (error) {
-      return {
-        message: 'I can help you with marketing strategies. What specific aspect of marketing are you interested in?',
-        suggestions: [
-          'Social media marketing',
-          'Content creation ideas',
-          'Customer engagement strategies',
+          'Show me content ideas',
+          'How can I use social media effectively?',
+          'What\'s my marketing budget?',
+          'How can I reach more customers?',
         ],
         requiresClarification: false,
       };
     }
+
+    throw new Error('AI service unavailable for marketing advice');
   }
 
   /**
@@ -755,60 +605,24 @@ Key guidelines:
     userId: string,
     userContext?: string
   ): Promise<AIResponse> {
-    try {
-      // Use AI to provide comprehensive business insights with full context
-      const aiPrompt = `The user is asking for business insights. Based on their complete business profile, financial performance, transaction history, and trends, provide key insights about their business performance, opportunities, and recommendations for improvement.`;
-      const aiResponse = await this.getAIResponse(aiPrompt, userContext || '');
+    // Use AI to provide comprehensive business insights with full context
+    const aiPrompt = `The user is asking for business insights. Based on their complete business profile, financial performance, transaction history, and trends, provide key insights about their business performance, opportunities, and recommendations for improvement.`;
+    const aiResponse = await this.getAIResponse(aiPrompt, userContext || '');
 
-      if (aiResponse) {
-        return {
-          message: aiResponse,
-          suggestions: [
-            'Show me my dashboard',
-            'What are my alerts?',
-            'How is my business performing?',
-            'What opportunities should I focus on?',
-          ],
-          requiresClarification: false,
-        };
-      }
-
-      // Fallback to dashboard insights if AI is unavailable
-      const dashboardData = await DashboardService.getDashboardData(userId);
-      
-      const insights = dashboardData.insights.slice(0, 3);
-      const insightList = insights.map((insight, i) => 
-        `${i + 1}. ${insight.title}\n   ${insight.description}\n   💡 Action: ${insight.recommendedAction}`
-      ).join('\n\n');
-
-      const message = `Here are the key insights about your business:\n\n${insightList}`;
-
+    if (aiResponse) {
       return {
-        message,
+        message: aiResponse,
         suggestions: [
           'Show me my dashboard',
           'What are my alerts?',
           'How is my business performing?',
-        ],
-        requiresClarification: false,
-        dataReferences: [
-          {
-            type: 'insight',
-            id: 'business-insights',
-            value: insights,
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        message: 'I need more business data to generate insights. Please ensure you have uploaded transactions and completed your business profile.',
-        suggestions: [
-          'Upload transactions',
-          'Complete business profile',
+          'What opportunities should I focus on?',
         ],
         requiresClarification: false,
       };
     }
+
+    throw new Error('AI service unavailable for business insights');
   }
 
   /**
@@ -818,17 +632,155 @@ Key guidelines:
     userId: string,
     limit: number = 10
   ): Promise<Message[]> {
-    // In a real implementation, this would fetch from database
-    // For now, return empty array
-    return [];
+    try {
+      const result = await pool.query(
+        `SELECT id, role, content, timestamp 
+         FROM conversations 
+         WHERE user_id = $1 
+         ORDER BY timestamp DESC 
+         LIMIT $2`,
+        [userId, limit]
+      );
+
+      // Ensure we return messages in chronological order (oldest first)
+      // The query above fetches the latest N messages (newest first), so reverse them
+      const rows = result.rows.reverse();
+
+      return rows.map(row => ({
+        id: row.id,
+        role: row.role as 'user' | 'assistant',
+        content: row.content,
+        timestamp: row.timestamp,
+      }));
+    } catch (error) {
+      console.error('Error fetching conversation history:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Check if the current query is a follow-up to previous conversation
+   */
+  private static isFollowUpQuestion(query: string, conversationHistory: Message[]): boolean {
+    if (conversationHistory.length === 0) {
+      return false;
+    }
+
+    // Get the last assistant message
+    const lastAssistantMessage = conversationHistory.find(msg => msg.role === 'assistant');
+    if (!lastAssistantMessage) {
+      return false;
+    }
+
+    // Keywords that indicate follow-up questions
+    const followUpKeywords = [
+      'how can i', 'tell me more', 'expand on', 'more details', 'specifically',
+      'what about', 'how do i', 'can you explain', 'more about', 'elaborate',
+      'optimize', 'improve', 'implement', 'steps', 'guide', 'process'
+    ];
+
+    // Check if query contains follow-up keywords
+    const hasFollowUpKeyword = followUpKeywords.some(keyword => 
+      query.toLowerCase().includes(keyword)
+    );
+
+    if (!hasFollowUpKeyword) {
+      return false;
+    }
+
+    // Check if the query references something from the previous response
+    const lastResponse = lastAssistantMessage.content.toLowerCase();
+    
+    // Common topics that might be referenced
+    const topics = [
+      'inventory', 'cost', 'expense', 'marketing', 'social media', 'customer',
+      'revenue', 'profit', 'growth', 'strategy', 'management', 'optimization',
+      'advertising', 'promotion', 'sales', 'budget', 'finance', 'cash flow'
+    ];
+
+    // Check if query mentions a topic that was in the previous response
+    const queryMentionsTopic = topics.some(topic => 
+      query.toLowerCase().includes(topic) && lastResponse.includes(topic)
+    );
+
+    return queryMentionsTopic;
+  }
+
+  /**
+   * Handle follow-up questions with context from previous conversation
+   */
+  private static async handleFollowUpQuestion(
+    userId: string,
+    query: string,
+    conversationHistory: Message[],
+    userContext: string
+  ): Promise<AIResponse> {
+    // Build conversation context
+    const conversationContext = this.buildConversationContext(conversationHistory);
+    
+    // Create a comprehensive prompt for the AI
+    const followUpPrompt = `The user is asking a follow-up question: "${query}"
+    
+Previous conversation context:
+${conversationContext}
+
+User's business context:
+${userContext}
+
+This appears to be a follow-up question asking for more specific details or implementation steps. Please provide a detailed, actionable response that directly addresses their follow-up question while building on the previous conversation. Focus on practical, step-by-step guidance.`;
+
+    // Try to get AI response with full context
+    const aiResponse = await this.getAIResponse(followUpPrompt);
+    
+    if (aiResponse) {
+      return {
+        message: aiResponse,
+        suggestions: [
+          'What are the next steps?',
+          'How do I implement this?',
+          'What tools do I need?',
+          'How long will this take?',
+        ],
+        requiresClarification: false,
+      };
+    }
+
+    // If AI is unavailable, return error
+    throw new Error('AI service unavailable for follow-up questions');
+  }
+
+  /**
+   * Build conversation context string from message history
+   */
+  private static buildConversationContext(conversationHistory: Message[]): string {
+    if (conversationHistory.length === 0) {
+      return 'No previous conversation';
+    }
+
+    // Get last 3 messages for context
+    const recentMessages = conversationHistory.slice(0, 6); // 3 exchanges
+    
+    return recentMessages
+      .reverse() // Show in chronological order
+      .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+      .join('\n\n');
   }
 
   /**
    * Clear conversation context for a user
    */
   static async clearContext(userId: string): Promise<void> {
-    // In a real implementation, this would clear from database/cache
-    // For now, this is a no-op
-    return;
+    try {
+      // Remove all stored conversation messages for this user so that
+      // after clearing context and refreshing the UI, history no longer reloads.
+      await pool.query(
+        `DELETE FROM conversations WHERE user_id = $1`,
+        [userId]
+      );
+    } catch (error) {
+      console.error('Error clearing conversation context:', error);
+      // Surface the error to caller by re-throwing so callers can handle it
+      throw error;
+    }
   }
 }

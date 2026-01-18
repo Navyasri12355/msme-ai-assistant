@@ -1,9 +1,41 @@
-node_modules
-dist
-dist-ssr
-*.local
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+*.tsbuildinfo
+
+# Environment files
 .env
 .env.local
-.env.production
-coverage
+.env.development.local
+.env.test.local
+.env.production.local
+*.local
+
+# Vite
+.vite/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# OS files
 .DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+
+# Logs
+*.log
+
+# Cache
+.cache/
+.parcel-cache/
+
+# Temporary files
+*.tmp
+*.temp

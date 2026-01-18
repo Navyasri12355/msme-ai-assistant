@@ -1,6 +1,45 @@
+# Dependencies
 node_modules/
+
+# Build outputs
 dist/
+build/
+*.tsbuildinfo
+
+# Environment files
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
 *.log
+logs/
+
+# Coverage
 coverage/
+.nyc_output/
+
+# OS files
 .DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Cache
+.cache/
+
+# Temporary files
+*.tmp
+*.temp
+
+# PM2
+.pm2/
